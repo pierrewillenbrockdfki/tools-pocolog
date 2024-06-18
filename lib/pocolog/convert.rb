@@ -2,11 +2,10 @@
 module Pocolog
     class Logfiles
         def self.write_prologue(to_io, big_endian = nil)
-            to_io.write(MAGIC)
             if big_endian.nil?
                 big_endian = Pocolog.big_endian?
             end
-            to_io.write(*[FORMAT_VERSION, big_endian ? 1 : 0].pack('xVV'))
+            Format::Current.write_prologue(to_io, big_endian)
         end
 
         # Converts a version 1 logfile. Modifications:
