@@ -9,16 +9,6 @@ module Pocolog
             to_io.write(*[FORMAT_VERSION, big_endian ? 1 : 0].pack('xVV'))
         end
 
-        def self.copy_block(block_info, from_io, to_io, buffer)
-            # copy the block as-is
-            from_io.seek(block_info.pos)
-            buffer = from_io.read(BLOCK_HEADER_SIZE + block_info.payload_size, buffer)
-            if block_given?
-                buffer = yield(buffer)
-            end
-            to_io.write(buffer)
-        end
-
         # Converts a version 1 logfile. Modifications:
         # * no prologue
         # * no compressed flag on data blocks
