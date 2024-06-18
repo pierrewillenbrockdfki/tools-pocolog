@@ -26,17 +26,18 @@ module Pocolog
         #   field a 32-bit integer
         def self.from_version_1(from, to_io, big_endian)
             write_prologue(to_io, big_endian)
-            from_io = from.rio
+            from_io = from.io
 
             buffer = ""
             uncompressed = [0].pack('C')
-            from.each_block(true, false) do |block_info|
+            while (block_info = from.read_next_block_header)
                 if block_info.type == STREAM_BLOCK
-                    copy_block(block_info, from_io, to_io, buffer)
+                    payload = from.block_stream.read_payload
+                    Logfiles.write_block(to_io, block_info.kind, block_info.stream_index, payload)
                 elsif block_info.type == CONTROL_BLOCK
                     # remove the fields in time structure
-                    to_io.write([block_info.type, block_info.index, block_info.payload_size - 16].pack('CxvV'))
-                    from_io.seek(block_info.pos + BLOCK_HEADER_SIZE + 4)
+                    to_io.write([block_info.type, block_info.stream_index, block_info.payload_size - 16].pack('CxvV'))
+                    from_io.seek(4, IO::SEEK_CUR)
                     to_io.write(from_io.read(8))
                     from_io.seek(4, IO::SEEK_CUR)
                     to_io.write(from_io.read(1))
@@ -45,8 +46,8 @@ module Pocolog
                 else
                     size_offset = - 16 + 1
 
-                    to_io.write([block_info.type, block_info.index, block_info.payload_size + size_offset].pack('CxvV'))
-                    from_io.seek(block_info.pos + BLOCK_HEADER_SIZE + 4)
+                    to_io.write([block_info.type, block_info.stream_index, block_info.payload_size + size_offset].pack('CxvV'))
+                    from_io.seek(4, IO::SEEK_CUR)
                     to_io.write(from_io.read(8))
                     from_io.seek(8, IO::SEEK_CUR)
                     to_io.write(from_io.read(8))
@@ -60,7 +61,7 @@ module Pocolog
         end
 
         def self.to_new_format(from_io, to_io, big_endian = nil)
-            from = Logfiles.new(from_io)
+            from = BlockStream.new(from_io)
             from.read_prologue
 
         rescue MissingPrologue
