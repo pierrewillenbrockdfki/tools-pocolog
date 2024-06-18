@@ -154,7 +154,6 @@ module Pocolog
         end
 
         def execute
-            buffer = ""
             init do |from, to|
                 Logfiles.write_prologue(to, Pocolog.big_endian?)
 
@@ -166,39 +165,39 @@ module Pocolog
                 from.each do |file_io|
                     from    = Logfiles.new(file_io)
                     index_mapping = Array.new
-                    from.each_block do |info|
-                        if info.type == STREAM_BLOCK
-                            stream = from.read_stream_declaration
+                    from.each_block_header do |block|
+                        payload = from.block_stream.read_payload
+
+                        if block.kind == STREAM_BLOCK
+                            stream = BlockStream::StreamBlock.parse(payload)
                             if streams.empty? || streams.has_key?(stream.name)
                                 if !enabled[[stream.name, stream.typename]]
                                     enabled[[stream.name, stream.typename]] = next_index
                                     next_index += 1
                                 end
-                                index_mapping[info.index] = [enabled[[stream.name, stream.typename]]].pack("v")
-                                start_sample[info.index], sample_count[info.index] = *streams[stream.name]
+                                index_mapping[block.stream_index] = enabled[[stream.name, stream.typename]]
+                                start_sample[block.stream_index], sample_count[block.stream_index] = *streams[stream.name]
                             end
                         end
 
-                        stream_index = index_mapping[info.index]
+                        stream_index = index_mapping[block.stream_index]
                         if stream_index
-                            if (skip = start_sample[info.index]) && info.type == DATA_BLOCK
-                                start_sample[info.index] =
+                            if (skip = start_sample[block.stream_index]) && block.kind == DATA_BLOCK
+                                start_sample[block.stream_index] =
                                     if skip > 1 then skip - 1
                                     else nil
                                     end
                                 next
                             end
 
-                            Logfiles.copy_block(info, from.rio, to, buffer) do |buffer|
-                                buffer[2, 2] = stream_index
-                                buffer
-                            end
-                            remaining    = sample_count[info.index]
-                            if remaining && info.type == DATA_BLOCK
+                            Logfiles.write_block(to, block.kind, stream_index, payload)
+
+                            remaining    = sample_count[block.stream_index]
+                            if remaining && block.kind == DATA_BLOCK
                                 if remaining > 1
-                                    sample_count[info.index] = remaining - 1
+                                    sample_count[block.stream_index] = remaining - 1
                                 else # reached the max count, disable copying that stream
-                                    index_mapping[info.index] = nil
+                                    index_mapping[block.stream_index] = nil
                                 end
                             end
                         end
@@ -676,7 +675,8 @@ parser = OptionParser.new do |opts|
             name, start, finish = n.split(':')
             start = Integer(start) if start
             finish = Integer(finish) if finish
-            config.streams[name] = [start, finish - (start || 0)]
+            stop = finish - (start || 0) if finish
+            config.streams[name] = [start, stop]
         end
     end
     opts.on('--little-endian', 'the source file of --to-new-format is little-endian', 'Needed by --to-new-format to convert v1 files') do
