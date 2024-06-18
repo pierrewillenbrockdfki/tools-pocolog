@@ -76,35 +76,33 @@ module Pocolog
         
         def self.compress(from_io, to_io)
             from = Logfiles.new(from_io)
-            from.read_prologue
             write_prologue(to_io, from.endian_swap ^ Pocolog.big_endian?)
 
-            compressed = [1].pack('C')
-            buffer = "".encode('BINARY')
-            from.each_block(true) do |block_info|
-                if block_info.type != DATA_BLOCK || block_info.payload_size < COMPRESSION_MIN_SIZE
-                    copy_block(block_info, from_io, to_io, buffer)
-                else
-                    # Get the data header
-                    data_header = from.data_header
-                    if data_header.compressed
-                        copy_block(block_info, from_io, to_io, buffer)
-                        next
+            from.each_block_header do |block_info|
+                if block_info.kind == DATA_BLOCK
+                    data_header = from.block_stream.read_data_block_header
+                    payload = from.block_stream.read_payload
+
+                    compressed = data_header.compressed?
+
+                    if !compressed
+                        if payload.size > Logfiles::COMPRESSION_MIN_SIZE
+                            payload2 = Zlib::Deflate.deflate(payload)
+                            if payload2.size < payload.size
+                                compressed = true
+                                payload = payload2
+                            end
+                        end
                     end
 
-                    compressed = Zlib::Deflate.deflate(from.data)
-                    delta = data_header.size - compressed.size
-                    if Float(delta) / data_header.size > COMPRESSION_THRESHOLD
-                        # Save it in compressed form
-                        payload_size = DATA_HEADER_SIZE + compressed.size
-                        to_io.write([block_info.type, block_info.index, payload_size].pack('CxvV'))
-                        from_io.seek(block_info.pos + BLOCK_HEADER_SIZE)
-                        from_io.read(TIME_SIZE * 2, buffer)
-                        to_io.write(buffer << [compressed.size, 1].pack('VC'))
-                        to_io.write(compressed)
-                    else
-                        copy_block(block_info, from_io, to_io, buffer)
-                    end
+                    Logfiles.write_data_block(to_io, block_info.stream_index,
+                                              data_header.rt_time,
+                                              data_header.lg_time,
+                                              compressed ? 1 : 0,
+                                              payload)
+                else
+                    payload = from.block_stream.read_payload
+                    Logfiles.write_block(to_io, block_info.kind, block_info.stream_index, payload)
                 end
             end
         end
